@@ -8,7 +8,8 @@
     "start": "node server.js",
     "dev": "node server.js",
     "service:restart": "launchctl kickstart -k gui/$(id -u)/com.freewind.droid2api",
-    "service:uninstall": "launchctl bootout gui/$(id -u)/com.freewind.droid2api"
+    "service:uninstall": "launchctl bootout gui/$(id -u)/com.freewind.droid2api",
+    "test": "node --test"
   },
   "keywords": ["openai", "api", "proxy"],
   "author": "",

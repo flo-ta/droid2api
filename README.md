@@ -6,10 +6,11 @@ OpenAI 兼容的 API 代理服务器，统一访问不同的 LLM 模型。
 
 ## 核心功能
 
-### 🔐 静态 API Key 认证
+### 🔐 独立客户端鉴权与 Factory 认证
+- **request_auth_token** - 必填，酒馆 / AI harness 填写的客户端 API Key，与 Factory 凭据独立
 - **FACTORY_API_KEY** - 环境变量设置固定 API 密钥（必需），永不过期、无需刷新
 - **FACTORY_ORG_ID** - 可选，上游 `x-factory-org-id` 头使用的 Factory 侧组织 ID
-- **明确失败** - 未设置 `FACTORY_API_KEY` 时启动直接报错退出
+- **明确失败** - 未设置 `FACTORY_API_KEY` 或 `request_auth_token` 时启动直接报错退出；客户端未带或带错密钥返回 401
 
 ### 🧠 智能推理级别控制
 - **五档推理级别** - auto/off/low/medium/high，灵活控制推理行为
@@ -44,7 +45,7 @@ OpenAI 兼容的 API 代理服务器，统一访问不同的 LLM 模型。
 - **完美兼容** - 与Claude Code CLI工具无缝集成
 - **系统提示注入** - 自动添加Droid身份标识，保持上下文一致性
 - **请求头标准化** - 自动添加Factory特定的认证和会话头信息
-- **零配置使用** - Claude Code可直接使用，无需额外设置
+- **客户端认证** - Claude Code 使用 `request_auth_token` 作为 API Key
 
 ## 其他特性
 
@@ -70,9 +71,9 @@ npm install
 
 ## 快速开始
 
-### 1. 配置认证（静态 API Key）
+### 1. 配置认证（客户端与上游各自独立）
 
-**必填：`FACTORY_API_KEY`；可选：`FACTORY_ORG_ID`**
+**必填：`FACTORY_API_KEY`、`request_auth_token`；可选：`FACTORY_ORG_ID`**
 
 方式一：项目根目录创建 `.env` 文件（参考 `.env.example`，已被 gitignore），服务启动时自动读取：
 
@@ -84,17 +85,29 @@ chmod 600 .env
 ```env
 FACTORY_API_KEY=your_factory_api_key_here
 FACTORY_ORG_ID=your_factory_org_id
+request_auth_token=your_private_request_token_here
 ```
 
 方式二：环境变量（优先级高于 `.env`，已设置的项不会被 `.env` 覆盖）：
 
 ```bash
 export FACTORY_API_KEY="your_factory_api_key_here"
+export request_auth_token="your_private_request_token_here"
 export FACTORY_ORG_ID="your_factory_org_id"
 ```
 
-- 未设置 `FACTORY_API_KEY` 时服务器启动即报错退出。
+- 未设置或留空 `FACTORY_API_KEY` / `request_auth_token` 时服务器启动即报错退出。
 - `FACTORY_ORG_ID` 缺省时不发送 `x-factory-org-id` 头。
+- `request_auth_token` 使用足够长的随机字符串（可打印 ASCII，不含空白或逗号）。修改密钥后需要重启服务。
+- 所有 API 都要求 `Authorization: Bearer <request_auth_token>` 或 `x-api-key: <request_auth_token>`。同时提供两种头时必须都正确，重复鉴权头会被拒绝。
+- 根路径 `GET /` 健康检查和 `OPTIONS` 预检无需 Token，不会访问上游。
+- 客户端填写 `request_auth_token`，服务端始终使用 `FACTORY_API_KEY` 和 `FACTORY_ORG_ID` 访问 Factory，不转发客户端密钥或组织 ID。
+
+生成随机密钥：
+
+```bash
+node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
+```
 
 ### 2. 配置模型（可选）
 
@@ -256,6 +269,7 @@ docker run -d \
   -p 3000:3000 \
   -e FACTORY_API_KEY="your_factory_api_key_here" \
   -e FACTORY_ORG_ID="your_factory_org_id" \
+  -e request_auth_token="your_private_request_token_here" \
   --name droid2api \
   droid2api
 ```
@@ -264,6 +278,7 @@ docker run -d \
 
 Docker部署支持以下环境变量：
 
+- `request_auth_token` - 独立客户端 API Key（必需，环境变量名为小写）
 - `FACTORY_API_KEY` - Factory API 密钥（必需）
 - `FACTORY_ORG_ID` - Factory 侧组织 ID（可选，用于上游 `x-factory-org-id` 头）
 - `PORT` - 服务端口（默认3000）
@@ -278,14 +293,16 @@ Docker部署支持以下环境变量：
    API Base URL: http://localhost:3000
    ```
 
-2. **可用端点**：
+2. **客户端密钥**：在酒馆 / AI harness 的 API Key 栏填写 `.env` 中的 `request_auth_token`。Claude Code 使用 `ANTHROPIC_API_KEY` 或 `ANTHROPIC_AUTH_TOKEN` 设置同一密钥；如果同时设置，两者都必须正确。
+
+3. **可用端点**：
    - `/v1/chat/completions` - 标准OpenAI格式，自动格式转换
    - `/v1/responses` - 直接转发到OpenAI端点（透明代理）
    - `/v1/messages` - 直接转发到Anthropic端点（透明代理）
    - `/v1/generate` - 直接转发到Google端点（透明代理）
    - `/v1/models` - 获取可用模型列表
 
-3. **自动功能**：
+4. **自动功能**：
    - ✅ 系统提示自动注入
    - ✅ 认证头自动添加
    - ✅ 推理级别自动配置
@@ -310,10 +327,12 @@ Docker部署支持以下环境变量：
 
 ### API 使用
 
+以下示例假定已在当前 shell 导出 `request_auth_token`；服务端读取 `.env` 不会自动导出到终端。端口请与 `config.json` 保持一致。
+
 #### 获取模型列表
 
 ```bash
-curl http://localhost:3000/v1/models
+curl -H "Authorization: Bearer $request_auth_token" http://localhost:3000/v1/models
 ```
 
 #### 对话补全
@@ -321,6 +340,7 @@ curl http://localhost:3000/v1/models
 **流式响应**（实时返回）：
 ```bash
 curl http://localhost:3000/v1/chat/completions \
+  -H "Authorization: Bearer $request_auth_token" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "claude-opus-4-1-20250805",
@@ -334,6 +354,7 @@ curl http://localhost:3000/v1/chat/completions \
 **非流式响应**（等待完整结果）：
 ```bash
 curl http://localhost:3000/v1/chat/completions \
+  -H "Authorization: Bearer $request_auth_token" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "claude-opus-4-1-20250805",
@@ -358,15 +379,17 @@ curl http://localhost:3000/v1/chat/completions \
 
 ### 如何配置授权机制？
 
-只需设置静态 API 密钥：
+服务端配置 Factory 密钥与独立客户端密钥：
 
 ```bash
 export FACTORY_API_KEY="your_factory_api_key_here"
+export request_auth_token="your_private_request_token_here"
 ```
 
 - 固定密钥永不过期，无刷新机制。
 - 可选设置 `FACTORY_ORG_ID`，用于上游 `x-factory-org-id` 头；缺省时不发送该头。
-- 未设置密钥时服务器启动直接报错退出。
+- 未设置任一必填密钥时服务器启动直接报错退出。
+- 酒馆 / AI harness 的 API Key 填写 `request_auth_token`；该密钥只用于入口校验。
 
 ### 如何获取 Factory API Key？
 
@@ -438,7 +461,7 @@ droid2api完全尊重客户端的stream参数设置：
 
 ### Claude Code无法连接怎么办？
 
-1. 确保droid2api服务器正在运行：`curl http://localhost:3000/v1/models`
+1. 确保droid2api服务器正在运行：`curl -H "Authorization: Bearer $request_auth_token" http://localhost:3000/v1/models`
 2. 检查Claude Code的API Base URL设置
 3. 确认防火墙没有阻止端口3000
 
@@ -483,7 +506,9 @@ droid2api完全尊重客户端的stream参数设置：
 
 ### 认证失败
 
-确保已设置环境变量 `FACTORY_API_KEY`，查看启动日志确认初始化结果：
+先区分入口与上游认证，查看启动日志确认初始化结果：
+- 入口返回 `invalid_api_key` / 401：检查客户端 API Key 是否等于 `request_auth_token`，以及是否存在冲突的鉴权头。
+- 启动失败：检查 `FACTORY_API_KEY` 和 `request_auth_token` 是否都已设置且非空。
 - 密钥无效时，更新环境变量后重启服务
 - 上游返回 403 时，检查 `FACTORY_ORG_ID` 是否为 Factory 侧组织 ID
 
