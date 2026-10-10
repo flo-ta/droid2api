@@ -11,6 +11,8 @@ services:
       - FACTORY_API_KEY=${FACTORY_API_KEY}
       # 可选：上游 x-factory-org-id 使用的 Factory 侧组织 ID
       - FACTORY_ORG_ID=${FACTORY_ORG_ID}
+      # 必填：独立的客户端鉴权密钥
+      - request_auth_token=${request_auth_token:?Set request_auth_token in .env}
       # 如需修改端口，在config.json中配置
     restart: unless-stopped
     healthcheck:

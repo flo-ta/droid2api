@@ -18,6 +18,9 @@ FACTORY_API_KEY=your_factory_api_key_here
 
 # 可选：上游 x-factory-org-id 使用的 Factory 侧组织 ID
 FACTORY_ORG_ID=your_factory_org_id
+
+# 必填：客户端独立 API Key（酒馆 / AI harness 使用）
+request_auth_token=your_private_request_token_here
 ```
 
 ### 2. 使用 Docker Compose 启动
@@ -54,6 +57,7 @@ docker run -d \
   -p 3000:3000 \
   -e FACTORY_API_KEY="your_factory_api_key_here" \
   -e FACTORY_ORG_ID="your_factory_org_id" \
+  -e request_auth_token="your_private_request_token_here" \
   droid2api:latest
 ```
 
@@ -81,6 +85,7 @@ docker rm droid2api
    - **Branch**: docker-deploy
    - **Port**: 3000
 4. 添加环境变量：
+   - `request_auth_token`: 独立客户端 API Key（必需，名称为小写）
    - `FACTORY_API_KEY`: Factory API 密钥（必需）
    - `FACTORY_ORG_ID`: Factory 侧组织 ID（可选）
 5. 点击 "Create Web Service"
@@ -92,6 +97,7 @@ docker rm droid2api
 3. 选择分支：docker-deploy
 4. Railway 会自动检测 Dockerfile
 5. 添加环境变量：
+   - `request_auth_token`: 独立客户端 API Key（必需，名称为小写）
    - `FACTORY_API_KEY`: Factory API 密钥（必需）
    - `FACTORY_ORG_ID`: Factory 侧组织 ID（可选）
 6. 部署完成后会自动分配域名
@@ -115,7 +121,7 @@ docker rm droid2api
 
 4. 设置环境变量：
    ```bash
-   fly secrets set FACTORY_API_KEY="your_factory_api_key_here"
+   fly secrets set FACTORY_API_KEY="your_factory_api_key_here" request_auth_token="your_private_request_token_here"
 
    # 可选
    fly secrets set FACTORY_ORG_ID="your_factory_org_id"
@@ -140,7 +146,7 @@ docker rm droid2api
      --platform managed \
      --region us-central1 \
      --allow-unauthenticated \
-     --set-env-vars FACTORY_API_KEY="your_factory_api_key_here",FACTORY_ORG_ID="your_factory_org_id" \
+     --set-env-vars FACTORY_API_KEY="your_factory_api_key_here",FACTORY_ORG_ID="your_factory_org_id",request_auth_token="your_private_request_token_here" \
      --port 3000
    ```
 
@@ -150,6 +156,7 @@ docker rm droid2api
 2. 推送镜像到 ECR
 3. 创建 ECS 任务定义
 4. 配置环境变量：
+   - `request_auth_token`（必需）
    - `FACTORY_API_KEY`（必需）
    - `FACTORY_ORG_ID`（可选）
 5. 创建 ECS 服务
@@ -160,13 +167,16 @@ docker rm droid2api
 
 ```bash
 curl http://localhost:3000/
-curl http://localhost:3000/v1/models
+curl -H "Authorization: Bearer $request_auth_token" http://localhost:3000/v1/models
 ```
+
+根路径健康检查无需 Token；模型列表及所有生成接口均需鉴权。上述模型列表示例需要先在当前 shell 导出 `request_auth_token`。
 
 ## 环境变量说明
 
 | 变量名 | 必需 | 说明 |
 |--------|------|------|
+| `request_auth_token` | 是 | 独立客户端密钥，可打印 ASCII 且不含空白或逗号；修改后重启服务 |
 | `FACTORY_API_KEY` | 是 | Factory API 密钥（fk- 开头），永不过期 |
 | `FACTORY_ORG_ID` | 否 | 上游 `x-factory-org-id` 头使用的 Factory 侧组织 ID |
 | `NODE_ENV` | 否 | 运行环境，默认 production |
@@ -181,18 +191,18 @@ docker logs droid2api
 ```
 
 常见问题：
-- 未设置 `FACTORY_API_KEY`
+- 未设置或留空 `FACTORY_API_KEY` / `request_auth_token`
 - API 密钥无效
 - 端口 3000 已被占用
 
 ### API 请求返回 401
 
-**原因**：API 密钥无效或已吊销
-
 **解决**：
-1. 检查 `FACTORY_API_KEY` 是否有效
-2. 更新环境变量
-3. 重启容器
+1. 入口返回 `invalid_api_key` 时，客户端 API Key 必须等于 `request_auth_token`，使用 Bearer 或 `x-api-key`；同时发送两种头时必须都正确。
+2. 若上游 Factory 返回 401，检查服务端 `FACTORY_API_KEY` 是否有效。
+3. 修改环境变量后重建容器：`docker-compose up -d --force-recreate`。
+
+客户端无需持有 Factory 密钥或组织 ID，它们始终由服务端配置提供。
 
 ### API 请求返回 403
 
